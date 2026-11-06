@@ -1,65 +1,165 @@
+import json
+import time
 import random
+import logging
+from typing import Dict, List, Optional
 
-# Banco de dados simulado organizado por nível de dificuldade
-QUESTOES = {
-    1: [  # Nível 1 - Fácil (ex: 1.º Ano)
-        {"pergunta": "Quanto é 2 + 3?", "resposta": "5"},
-        {"pergunta": "Qual é a primeira letra da palavra 'Gato'?", "resposta": "g"},
-        {"pergunta": "Quanto é 5 - 1?", "resposta": "4"}
-    ],
-    2: [  # Nível 2 - Médio (ex: 2.º/3.º Ano)
-        {"pergunta": "Quanto é 4 x 3?", "resposta": "12"},
-        {"pergunta": "Qual é o oposto de 'Quente'?", "resposta": "frio"},
-        {"pergunta": "Quanto é 15 + 15?", "resposta": "30"}
-    ],
-    3: [  # Nível 3 - Avançado (ex: 4.º Ano)
-        {"pergunta": "Quanto é 20 a dividir por 4?", "resposta": "5"},
-        {"pergunta": "Qual é o plural de 'Caracol'?", "resposta": "caracois"},
-        {"pergunta": "Quanto é 12 x 5?", "resposta": "60"}
-    ]
-}
+# Configuração de Logging para acompanhamento profissional do sistema
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S"
+)
 
-def testar_ia_adaptativa():
-    nivel = 2  # Começa num nível intermédio
-    nivel_min, nivel_max = 1, 3
-    acertos_consecutivos = 0
-    erros_consecutivos = 0
+class Aluno:
+    """Gere o perfil, estatísticas e o histórico do aluno."""
+    def __init__(self, nome: str, nivel_inicial: int = 2):
+        self.nome = nome
+        self.nivel_atual = nivel_inicial
+        self.pontuacao = 0
+        self.acertos_consecutivos = 0
+        self.erros_consecutivos = 0
+        self.historico: List[Dict] = []
 
-    print("=== SISTEMA ADAPTATIVO DA IA (TESTE INICIAL) ===")
-    print("Digita 'sair' a qualquer momento para terminar.\n")
-
-    while True:
-        # Seleciona uma pergunta aleatória do nível atual
-        pergunta_atual = random.choice(QUESTOES[nivel])
-
-        print(f"[Nível Atual: {nivel}] {pergunta_atual['pergunta']}")
-        resposta = input("Resposta: ").strip().lower()
-
-        if resposta == 'sair':
-            print("Teste finalizado.")
-            break
-
-        # Lógica de validação e adaptação de dificuldade
-        if resposta == pergunta_atual['resposta']:
-            print("-> Correto!\n")
-            acertos_consecutivos += 1
-            erros_consecutivos = 0
-            
-            # Sobe de nível se acertar 2 seguidas
-            if acertos_consecutivos >= 2 e nivel < nivel_max:
-                nivel += 1
-                acertos_consecutivos = 0
-                print(f"*** Parabéns! Subiste para o Nível {nivel} ***\n")
+    def registrar_resposta(self, pergunta: str, nivel: int, correto: bool):
+        self.historico.append({
+            "pergunta": pergunta,
+            "nivel": nivel,
+            "correto": correto,
+            "timestamp": time.time()
+        })
+        if correto:
+            self.pontuacao += nivel * 10
+            self.acertos_consecutivos += 1
+            self.erros_consecutivos = 0
         else:
-            print(f"-> Incorreto (Resposta certa: {pergunta_atual['resposta']})\n")
-            erros_consecutivos += 1
-            acertos_consecutivos = 0
+            self.acertos_consecutivos = 0
+            self.erros_consecutivos += 1
 
-            # Desce de nível se errar
-            if nivel > nivel_min:
-                nivel -= 1
-                erros_consecutivos = 0
-                print(f"*** Ajustando dificuldade: Desceste para o Nível {nivel} ***\n")
+class ControladorRobot:
+    """Módulo responsável pela interface de comunicação de hardware (Serial/Bluetooth)."""
+    def __init__(self, porta: Optional[str] = None):
+        self.porta = porta
+        self.conectado = False
+        self._conectar()
+
+    def _conectar(self):
+        if self.porta:
+            logging.info(f"Ligando ao hardware do robô na porta {self.porta}...")
+            # Exemplo futuro: self.serial = serial.Serial(self.porta, 9600)
+            self.conectado = True
+        else:
+            logging.info("Modo Simulação: Nenhum robô físico conectado.")
+
+    def enviar_comando(self, comando: str):
+        if self.conectado:
+            logging.info(f"[SÉRIE ENVIADA] -> {comando}")
+        else:
+            logging.info(f"[SIMULAÇÃO ROBÔ] Executando movimento: {comando}")
+
+    def reacao_sucesso(self):
+        self.enviar_comando("CMD_LED_VERDE; SERVO_ACENAR")
+
+    def reacao_erro(self):
+        self.enviar_comando("CMD_LED_VERMELHO; SERVO_APOIO")
+
+class MotorAdaptativo:
+    """Algoritmo de controlo da dificuldade adaptativa."""
+    def __init__(self, nivel_min: int = 1, nivel_max: int = 4):
+        self.nivel_min = nivel_min
+        self.nivel_max = nivel_max
+
+    def calcular_proximo_nivel(self, aluno: Aluno) -> int:
+        if aluno.acertos_consecutivos >= 2 e aluno.nivel_atual < self.nivel_max:
+            aluno.nivel_atual += 1
+            aluno.acertos_consecutivos = 0
+            logging.info(f"Subida de nível detetada! Novo Nível: {aluno.nivel_atual}")
+        elif aluno.erros_consecutivos >= 1 e aluno.nivel_atual > self.nivel_min:
+            aluno.nivel_atual -= 1
+            aluno.erros_consecutivos = 0
+            logging.info(f"Ajuste de dificuldade: Reduzido para Nível: {aluno.nivel_atual}")
+        
+        return aluno.nivel_atual
+
+class GestorBancoDados:
+    """Gestão das questões por disciplina e nível escolar."""
+    def __init__(self):
+        self.questoes = self._carregar_banco()
+
+    def _carregar_banco(self) -> Dict[int, List[Dict]]:
+        return {
+            1: [
+                {"pergunta": "Quanto é 3 + 4?", "resposta": "7", "disciplina": "Matemática"},
+                {"pergunta": "Qual é a primeira letra da palavra 'Escola'?", "resposta": "e", "disciplina": "Português"}
+            ],
+            2: [
+                {"pergunta": "Quanto é 6 x 2?", "resposta": "12", "disciplina": "Matemática"},
+                {"pergunta": "Qual é o antónimo de 'Alto'?", "resposta": "baixo", "disciplina": "Português"}
+            ],
+            3: [
+                {"pergunta": "Quanto é metade de 50?", "resposta": "25", "disciplina": "Matemática"},
+                {"pergunta": "Qual é o sujeito da frase 'O cão correu'?", "resposta": "o cao", "disciplina": "Português"}
+            ],
+            4: [
+                {"pergunta": "Quanto é 15 x 3?", "resposta": "45", "disciplina": "Matemática"},
+                {"pergunta": "Qual é o plural de 'Capitão'?", "resposta": "capitaes", "disciplina": "Português"}
+            ]
+        }
+
+    def obter_pergunta(self, nivel: int) -> Dict:
+        lista = self.questoes.get(nivel, self.questoes[1])
+        return random.choice(lista)
+
+class SistemaEducativoIA:
+    """Classe controladora principal do sistema."""
+    def __init__(self, nome_aluno: str, porta_robot: Optional[str] = None):
+        self.aluno = Aluno(nome_aluno)
+        self.motor = MotorAdaptativo()
+        self.robot = ControladorRobot(porta_robot)
+        self.banco = GestorBancoDados()
+
+    def guardar_progresso(self, ficheiro: str = "progresso_aluno.json"):
+        dados = {
+            "aluno": self.aluno.nome,
+            "nivel_final": self.aluno.nivel_atual,
+            "pontuacao_total": self.aluno.pontuacao,
+            "historico": self.aluno.historico
+        }
+        with open(ficheiro, "w", encoding="utf-8") as f:
+            json.dump(dados, f, indent=4, ensure_ascii=False)
+        logging.info(f"Relatório de desempenho guardado em '{ficheiro}'.")
+
+    def executar(self, total_perguntas: int = 4):
+        print(f"\n==========================================")
+        print(f" Sistema IA Educativa - Aluno(a): {self.aluno.nome}")
+        print(f"==========================================\n")
+
+        for i in range(1, total_perguntas + 1):
+            nivel = self.aluno.nivel_atual
+            q = self.banco.obter_pergunta(nivel)
+
+            print(f"[Perg. {i}/{total_perguntas}] (Nível {nivel} - {q['disciplina']})")
+            print(f"-> {q['pergunta']}")
+
+            resposta = input("Resposta: ").strip().lower()
+
+            correto = (resposta == q['resposta'].lower())
+            self.aluno.registrar_resposta(q['pergunta'], nivel, correto)
+
+            if correto:
+                print("✨ Correto!\n")
+                self.robot.reacao_sucesso()
+            else:
+                print(f"❌ Incorreto! A resposta era: {q['resposta']}\n")
+                self.robot.reacao_erro()
+
+            self.motor.calcular_proximo_nivel(self.aluno)
+
+        print("==========================================")
+        print(f"Sessão Concluída! Pontuação final: {self.aluno.pontuacao} pts")
+        print("==========================================")
+        self.guardar_progresso()
 
 if __name__ == "__main__":
-    testar_ia_adaptativa()
+    app = SistemaEducativoIA(nome_aluno="Tomás", porta_robot=None)
+    app.executar(total_perguntas=4)
